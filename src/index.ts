@@ -1,23 +1,26 @@
-import fastifyCors from '@fastify/cors'
-import fastify, { FastifyInstance } from 'fastify'
-import http, { Server } from 'http'
-import { Server as SocketServer } from 'socket.io'
+import cors from 'cors'
+import express, { Application, Router } from 'express'
+import { Socket, Server as SocketServer } from 'socket.io'
+import { Server, createServer } from 'http'
 import config from './config'
 import { AuthMiddleware } from './middleware/auth'
 import { logger } from './utils/logging'
 import chalk from 'chalk'
+import router from './router'
 
-const connectedUsers: Map<string, string> = new Map()
+export const connectedUsers = new Map<string, Socket>()
 
 class App {
-  private readonly app: FastifyInstance<http.Server>
+  private readonly app: Application
   private readonly http: Server
   private readonly io: SocketServer
 
   constructor() {
-    this.app = fastify({ logger: true })
-    this.app.register(fastifyCors, { origin: '*' })
-    this.http = http.createServer(this.app.server)
+    this.app = express()
+    this.app.use(cors())
+    this.http = createServer(this.app)
+    this.app.use(express.json())
+    this.app.use(router)
 
     this.io = new SocketServer(this.http, {
       cors: {
@@ -34,13 +37,13 @@ class App {
     this.io.on('connection', async (socket) => {
       AuthMiddleware.handle(socket, (user) => {
         logger.info(`User ${user.id} connected`)
-        connectedUsers.set(socket.id, user.id)
-      })
+        connectedUsers.set(user.id, socket)
 
-      socket.on('disconnect', () => {
-        if (!connectedUsers.has(socket.id)) return
-        logger.info(`User ${connectedUsers.get(socket.id)} disconnected`)
-        connectedUsers.delete(socket.id)
+        socket.on('disconnect', () => {
+          if (!connectedUsers.has(user.id)) return
+          logger.info(`User ${user.id} disconnected`)
+          connectedUsers.delete(user.id)
+        })
       })
     })
 
